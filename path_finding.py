@@ -4,22 +4,20 @@ from tqdm import tqdm
 
 from enum import Enum
 
+
 class MoveNeighbors(Enum):
-    NS = [(-1, 0), (1, 0), (0, -1), (0, 1)],  # North-South
-    EW = [(0, -1), (0, 1), (-1, 0), (1, 0)],  # East-West
-    SW = [(-1, 0), (-1, 1), (-1, 0), (0, 1)],  # South-West
-    SE = [(1, 0), (1, -1), (1, 1), (0, 1)],  # South-East
-    NW = [(-1, 0),(-1, -1), (0, -1), (0, -1)],  # North-West
-    NE = [(1, -1), (1, 1), (1, 0), (0, -1)],  # North-East   
-
-
-
+    NS = ([(-1, 0), (1, 0), (0, -1), (0, 1)],)  # North-South
+    EW = ([(0, -1), (0, 1), (-1, 0), (1, 0)],)  # East-West
+    SW = ([(-1, 0), (-1, 1), (-1, 0), (0, 1)],)  # South-West
+    SE = ([(1, 0), (1, -1), (1, 1), (0, 1)],)  # South-East
+    NW = ([(-1, 0), (-1, -1), (0, -1), (0, -1)],)  # North-West
+    NE = ([(1, -1), (1, 1), (1, 0), (0, -1)],)  # North-East
 
 
 def move_cost(cost_map, current, neighbor, previous_direction=None, turn_penalty=0.5):
     """
     Calculate the cost of moving from current to neighbor.
-    
+
     :param cost_map: 2D numpy array with terrain costs
     :param current: tuple (y, x) for current position
     :param neighbor: tuple (y, x) for neighbor position
@@ -28,17 +26,20 @@ def move_cost(cost_map, current, neighbor, previous_direction=None, turn_penalty
     :return: movement cost with momentum applied
     """
     # Base cost is altitude difference
-    base_cost = 1 + abs(int(cost_map[current[0], current[1]]) - int(cost_map[neighbor[0], neighbor[1]]))
-    
+    base_cost = 1 + abs(
+        int(cost_map[current[0], current[1]]) - int(cost_map[neighbor[0], neighbor[1]])
+    )
+
     # If we have a previous direction, apply momentum
     if previous_direction is not None:
         current_direction = (neighbor[0] - current[0], neighbor[1] - current[1])
-        
+
         # If we're turning (different direction), apply penalty
         if current_direction != previous_direction:
             base_cost = base_cost / turn_penalty
-    
+
     return base_cost
+
 
 def find_path(start, end, cost_map, turn_penalty=0.5):
     """
@@ -50,6 +51,7 @@ def find_path(start, end, cost_map, turn_penalty=0.5):
     :param turn_penalty: weight applied when turning (lower = higher penalty). Default 0.5 means turning costs 2x more
     :return: list of tuples representing the path, or None if no path is found
     """
+
     # cost_map = cost_map.T  # Transpose for (y, x) indexing
     # Heuristic function (Taxicab/Manhattan distance)
     def heuristic(a, b):
@@ -61,7 +63,7 @@ def find_path(start, end, cost_map, turn_penalty=0.5):
 
     # came_from dictionary to reconstruct the path
     came_from = {}
-    
+
     # direction_from dictionary to track the direction we arrived from
     direction_from = {}
 
@@ -99,16 +101,21 @@ def find_path(start, end, cost_map, turn_penalty=0.5):
             for neighbor in neighbors:
                 # Get the direction we came from at the current node
                 prev_direction = direction_from.get(current, None)
-                
+
                 # tentative_g_score is the distance from start to the neighbor through current
                 # The cost to move to a neighbor includes altitude difference and momentum
-                tentative_g_score = g_score[current] + move_cost(cost_map, current, neighbor, prev_direction, turn_penalty)
+                tentative_g_score = g_score[current] + move_cost(
+                    cost_map, current, neighbor, prev_direction, turn_penalty
+                )
 
                 if tentative_g_score < g_score[neighbor]:
                     # This path to neighbor is better than any previous one. Record it!
                     came_from[neighbor] = current
                     # Store the direction we're moving in
-                    direction_from[neighbor] = (neighbor[0] - current[0], neighbor[1] - current[1])
+                    direction_from[neighbor] = (
+                        neighbor[0] - current[0],
+                        neighbor[1] - current[1],
+                    )
                     g_score[neighbor] = tentative_g_score
                     f_score[neighbor] = g_score[neighbor] + heuristic(neighbor, end)
                     if (f_score[neighbor], neighbor) not in open_set:
