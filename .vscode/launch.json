@@ -5,6 +5,13 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "test",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "test_pathfinding.py",
+            "console": "internalConsole"
+        },
+        {
             "name": "find_routes",
             "type": "debugpy",
             "request": "launch",
