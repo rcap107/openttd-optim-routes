@@ -2,6 +2,8 @@ import heapq
 import numpy as np
 from tqdm import tqdm
 
+def move_cost(cost_map, current, neighbor):
+    return abs(int(cost_map[current[0], current[1]]) - int(cost_map[neighbor[0], neighbor[1]]))
 
 def find_path(start, end, cost_map):
     """
@@ -12,7 +14,7 @@ def find_path(start, end, cost_map):
     :param cost_map: 2D numpy array where each cell has a cost to traverse
     :return: list of tuples representing the path, or None if no path is found
     """
-
+    # cost_map = cost_map.T  # Transpose for (y, x) indexing
     # Heuristic function (Taxicab/Manhattan distance)
     def heuristic(a, b):
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
@@ -25,19 +27,11 @@ def find_path(start, end, cost_map):
     came_from = {}
 
     # g_score: cost from start to the current node
-    g_score = {
-        (y, x): float("inf")
-        for y in range(cost_map.shape[0])
-        for x in range(cost_map.shape[1])
-    }
+    g_score = np.inf * np.ones(cost_map.shape, dtype=np.float32)
     g_score[start] = 0
 
     # f_score: g_score + heuristic
-    f_score = {
-        (y, x): float("inf")
-        for y in range(cost_map.shape[0])
-        for x in range(cost_map.shape[1])
-    }
+    f_score = np.inf * np.ones(cost_map.shape, dtype=np.float32)
     f_score[start] = heuristic(start, end)
 
     with tqdm(total=cost_map.shape[0] * cost_map.shape[1], desc="Finding Path") as pbar:
@@ -66,11 +60,7 @@ def find_path(start, end, cost_map):
             for neighbor in neighbors:
                 # tentative_g_score is the distance from start to the neighbor through current
                 # The cost to move to a neighbor is the altitude difference
-                move_cost = abs(
-                    int(cost_map[current[0], current[1]])
-                    - int(cost_map[neighbor[0], neighbor[1]])
-                )
-                tentative_g_score = g_score[current] + move_cost
+                tentative_g_score = g_score[current] +move_cost(cost_map, current, neighbor)
 
                 if tentative_g_score < g_score[neighbor]:
                     # This path to neighbor is better than any previous one. Record it!

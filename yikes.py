@@ -57,7 +57,7 @@ def _(multi_widget):
 @app.cell
 def _(mo, multi_widget):
     positions = [
-        f"Puck {i+1}: ({x:.2f}, {y:.2f})"
+        f"({x:.2f}, {y:.2f})"
         for i, (x, y) in enumerate(zip(multi_widget.x, multi_widget.y))
     ]
     mo.callout("\n".join(positions))
