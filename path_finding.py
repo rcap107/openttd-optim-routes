@@ -64,7 +64,7 @@ def is_diagonal_move(dy, dx):
     return dy != 0 and dx != 0
 
 
-def move_cost(cost_map, current, neighbor, previous_direction=None, turn_penalty=0.5):
+def move_cost(cost_map, current, neighbor, previous_direction=None, turn_penalty=0.5, turn_90_multiplier=3.0):
     """
     Calculate the cost of moving from current to neighbor.
 
@@ -75,18 +75,26 @@ def move_cost(cost_map, current, neighbor, previous_direction=None, turn_penalty
     :param turn_penalty: weight for penalty when turning (0-1 scale, where 1 is no penalty)
     :return: movement cost with momentum applied
     """
-    # Base cost is altitude difference
-    base_cost = 1 + abs(
-        int(cost_map[current[0], current[1]]) - int(cost_map[neighbor[0], neighbor[1]])
-    )
+    # Base cost is altitude difference (cost_map expected as integer array)
+    if cost_map[neighbor[0], neighbor[1]] == 0:
+        return np.inf  # Impassable terrain
+    base_cost = 1 + abs(cost_map[current[0], current[1]] - cost_map[neighbor[0], neighbor[1]])
 
-    # If we have a previous direction, apply momentum
+    
+    # If we have a previous direction, apply momentum/turn penalties
     if previous_direction is not None:
         current_direction = (neighbor[0] - current[0], neighbor[1] - current[1])
 
         # If we're turning (different direction), apply penalty
         if current_direction != previous_direction:
-            base_cost = base_cost / turn_penalty
+            # Detect a 90-degree (perpendicular) turn via dot product == 0
+            dot = current_direction[0] * previous_direction[0] + current_direction[1] * previous_direction[1]
+            if dot == 0:
+                # Strongly discourage 90-degree turns by multiplying cost
+                base_cost = base_cost * turn_90_multiplier
+            else:
+                # Other turns get the usual turn penalty (increase cost by dividing)
+                base_cost = base_cost / turn_penalty
 
     return base_cost
 
@@ -100,11 +108,10 @@ def get_valid_neighbors(track_shape, direction):
     :return: List of valid neighbor directions (dy, dx)
     """
     if direction is None:
-        # First move - can start with any straight track
-        return [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        # First move - can start with any straight or diagonal track
+        return [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
     
-    # For now, let's allow more flexibility while still having some track logic
-    # Allow continuing in same direction or making 90-degree turns
+    # Allow continuing in same direction, 90-degree turns, and diagonal moves
     dy, dx = direction
     
     # Always allow continuing in the same direction
@@ -116,11 +123,14 @@ def get_valid_neighbors(track_shape, direction):
     if dx != 0:  # Was moving horizontally
         valid_moves.extend([(-1, 0), (1, 0)])  # Can turn north/south
     
+    # Allow diagonal moves from any direction
+    valid_moves.extend([(-1, -1), (-1, 1), (1, -1), (1, 1)])
+    
     # Remove duplicates
     return list(set(valid_moves))
 
 
-def find_path(start, end, cost_map, turn_penalty=0.5):
+def find_path(start, end, cost_map, turn_penalty=0.5, turn_90_multiplier=3.0):
     """
     Finds the best path between a start and end point using the A* algorithm with momentum.
 
@@ -136,109 +146,106 @@ def find_path(start, end, cost_map, turn_penalty=0.5):
     def heuristic(a, b):
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
-    # Priority queue for open set
+    # Convert cost_map to integer type for fast arithmetic
+    cost_map = cost_map.astype(np.int32, copy=False)
+
+    # Priority queue for open set: (f_score, counter, position, direction, track_shape)
     open_set = []
-    # came_from dictionary to reconstruct the path
+    counter = 0
+
+    # came_from: map state (pos,dir) -> previous state (pos,dir)
     came_from = {}
 
-    # direction_from dictionary to track the direction we arrived from
-    direction_from = {}
+    # g_score and f_score keyed by (pos,dir)
+    g_score = {}
+    f_score = {}
 
-    # g_score: cost from start to the current node
-    g_score = np.inf * np.ones(cost_map.shape, dtype=np.float32)
-    g_score[start] = 0
+    # Precompute neighbor lookup cache for (track_shape, direction)
+    neighbors_cache = {}
+    directions_to_cache = [None, (-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
+    for shape in MoveNeighbors:
+        for d in directions_to_cache:
+            neighbors_cache[(shape, d)] = get_valid_neighbors(shape, d)
 
-    # f_score: g_score + heuristic
-    f_score = np.inf * np.ones(cost_map.shape, dtype=np.float32)
-    f_score[start] = heuristic(start, end)
-
-    for d in [
-        (0, 1),
-        (1, 0),
-        (0, -1),
-        (-1, 0),
-    ]:
+    # Initialize start states: push possible initial directions
+    init_dirs = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+    pushed_any = False
+    for d in init_dirs:
         ny, nx = start[0] + d[0], start[1] + d[1]
         if 0 <= ny < cost_map.shape[0] and 0 <= nx < cost_map.shape[1]:
-            direction_from[start] = d
-            if d[0] != 0:
-                first_shape = MoveNeighbors.NS
-            else:
-                first_shape = MoveNeighbors.EW
-            break
-    first_piece = TrackPiece(position=start, track_type=first_shape, direction_from=d)
-    heapq.heappush(open_set, (0, first_piece))  # (f_score, node, type)
+            start_state = (start, d)
+            g_score[start_state] = 0
+            f = heuristic(start, end)
+            f_score[start_state] = f
+            track_shape = get_track_shape(d)
+            heapq.heappush(open_set, (f, counter, start, d, track_shape))
+            counter += 1
+            came_from[start_state] = None
+            pushed_any = True
+
+    if not pushed_any:
+        return None
+
+    closed = set()
 
     iteration = 0
     with tqdm(total=cost_map.shape[0] * cost_map.shape[1], desc="Finding Path") as pbar:
         while open_set:
             if iteration % 100 == 0:
                 pbar.update(1)
-            _, current = heapq.heappop(open_set)
+            f, _, current_pos, current_dir, current_track_shape = heapq.heappop(open_set)
 
-            if current.position == end:
-                # Reconstruct path
+            state = (current_pos, current_dir)
+
+            # if we've already processed this state with a better g, skip
+            if state in closed:
+                iteration += 1
+                continue
+
+            closed.add(state)
+
+            # If reached end (any direction), reconstruct path
+            if current_pos == end:
                 path = []
-                while current.position in came_from:
-                    path.append(current)
-                    current = came_from[current.position]
-                path.append(TrackPiece(position=start, track_type=first_shape, direction_from=d))
+                cur = state
+                while cur is not None:
+                    pos, dirc = cur
+                    shape = get_track_shape(dirc)
+                    path.append(TrackPiece(position=pos, track_type=shape, direction_from=dirc))
+                    cur = came_from.get(cur, None)
                 return path[::-1]
 
-            # Get neighbors based on current track shape and direction
-            neighbors = []
-            prev_direction = current.direction_from
-            current_track_shape = current.track_type
-
-            # Get valid moves based on the current track shape and direction
-            valid_moves = get_valid_neighbors(current_track_shape, prev_direction)
+            # Obtain valid moves from cache
+            valid_moves = neighbors_cache.get((current_track_shape, current_dir))
 
             for dy, dx in valid_moves:
-                ny, nx = current.position[0] + dy, current.position[1] + dx
+                ny, nx = current_pos[0] + dy, current_pos[1] + dx
+                if not (0 <= ny < cost_map.shape[0] and 0 <= nx < cost_map.shape[1]):
+                    continue
 
-                if 0 <= ny < cost_map.shape[0] and 0 <= nx < cost_map.shape[1]:
-                    # Check altitude constraint: diagonal moves not allowed with altitude difference
-                    if is_diagonal_move(dy, dx):
-                        altitude_diff = abs(
-                            int(cost_map[current.position[0], current.position[1]])
-                            - int(cost_map[ny, nx])
-                        )
-                        if altitude_diff > 0:
-                            # Skip this neighbor - can't use diagonal with altitude difference
-                            continue
+                # Check altitude constraint for diagonal moves
+                if is_diagonal_move(dy, dx):
+                    altitude_diff = abs(cost_map[current_pos[0], current_pos[1]] - cost_map[ny, nx])
+                    if altitude_diff > 0:
+                        continue
 
-                    neighbors.append((ny, nx, (dy, dx)))
-            for neighbor_data in neighbors:
-                neighbor_pos, move_direction = neighbor_data[0:2], neighbor_data[2]
-                neighbor = neighbor_pos
-                
-                # Get the direction we came from at the current node
-                prev_direction = current.direction_from
+                neighbor_pos = (ny, nx)
+                move_direction = (dy, dx)
+                neighbor_state = (neighbor_pos, move_direction)
 
-                # tentative_g_score is the distance from start to the neighbor through current
-                # The cost to move to a neighbor includes altitude difference and momentum
-                tentative_g_score = g_score[current.position] + move_cost(
-                    cost_map, current.position, neighbor, prev_direction, turn_penalty
+                tentative_g = g_score.get(state, np.inf) + move_cost(
+                    cost_map, current_pos, neighbor_pos, current_dir, turn_penalty, turn_90_multiplier
                 )
 
-                if tentative_g_score < g_score[neighbor]:
-                    # This path to neighbor is better than any previous one. Record it!
-                    came_from[neighbor] = current
-                    # Store the direction we're moving in
-                    direction_from[neighbor] = move_direction
-                    g_score[neighbor] = tentative_g_score
-                    f_score[neighbor] = g_score[neighbor] + heuristic(neighbor, end)
-                    # Determine track shape for the neighbor based on the movement direction
-                    next_track_shape = get_track_shape(move_direction)
-                    new_piece = TrackPiece(
-                        position=neighbor,
-                        track_type=next_track_shape,
-                        direction_from=move_direction,
-                    )
-                    if (f_score[neighbor], new_piece) not in open_set:
-                        heapq.heappush(
-                            open_set, (f_score[neighbor], new_piece)
-                        )
+                if tentative_g < g_score.get(neighbor_state, np.inf):
+                    came_from[neighbor_state] = state
+                    g_score[neighbor_state] = tentative_g
+                    fval = tentative_g + heuristic(neighbor_pos, end)
+                    f_score[neighbor_state] = fval
+                    next_shape = get_track_shape(move_direction)
+                    heapq.heappush(open_set, (fval, counter, neighbor_pos, move_direction, next_shape))
+                    counter += 1
+
             iteration += 1
 
     return None  # No path found
